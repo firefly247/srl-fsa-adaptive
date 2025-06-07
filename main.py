@@ -5,6 +5,7 @@ from inventory_env import InventoryEnv
 import matplotlib.pyplot as plt
 
 def phi(x):
+    x = x / 50.0  # 예: max_inventory = 50 기준
     x = np.clip(x, -10, 10)  # prevent x^4 explosion
     return np.array([x, x**2, x**3, x**4])
 
@@ -44,6 +45,8 @@ def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t):
     V_x = w @ phi(x)
     V_x_next = w @ phi(x_next)
     delta = reward - rho + V_x_next - V_x
+
+    delta = np.clip(delta, -10.0, 10.0)
 
     w += gamma1(t) * delta * phi(x)
     rho += gamma2(t) * (reward + V_x_next - V_x - rho)
@@ -122,7 +125,7 @@ def train_agent(env, config):
     obs = env.reset()
     x = obs[0]
 
-    for t in range(10):
+    for t in range(100):
         # step 2 : observe the transitioned state and corresponding reward after taking action at given state x_t
         # 정책 기반 행동 선택
         prob = sigmoid(x - s, tau)
