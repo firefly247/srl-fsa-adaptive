@@ -5,10 +5,12 @@ from inventory_env import InventoryEnv
 import matplotlib.pyplot as plt
 
 def phi(x):
+    x = np.clip(x, -10, 10)  # prevent x^4 explosion
     return np.array([x, x**2, x**3, x**4])
 
 def sigmoid(x, tau):
-    return 1 / (1 + np.exp(-x / tau))
+    z = np.clip(x / tau, -100, 100)  # prevent overflow in exp
+    return 1 / (1 + np.exp(-z))
 
 def sigmoid_derivative(x, tau):
     s = sigmoid(x, tau)
@@ -46,7 +48,14 @@ def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t):
     w += gamma1(t) * delta * phi(x)
     rho += gamma2(t) * (reward + V_x_next - V_x - rho)
 
-    return w, rho
+    logger.info(
+        f"[{t}] x={x:.4f}, V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
+        f"delta={delta:.4f}, "
+        f"w={np.array2string(w, precision=4)}, "
+        f"rho={rho:.4f}"
+    )
+
+    return w, rho, V_x, V_x_next, delta
 
 def update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau):
     """
@@ -85,9 +94,10 @@ def update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau):
     S -= b1(t) * beta_hat * (1 - f_xs) * ((-1) ** eta_S) * V_zS
     s -= b2(t) * df_dy * ((-1) ** eta_s) * V_zs
 
-    return s, S
+    return s, S, V_zs, V_zS
 
 def train_agent(env, config):
+    
     # config에서 초기 파라미터 불러오기
     s = config["s_init"]
     S = config["S_init"]
@@ -112,7 +122,7 @@ def train_agent(env, config):
     obs = env.reset()
     x = obs[0]
 
-    for t in range(episodes):
+    for t in range(10):
         # step 2 : observe the transitioned state and corresponding reward after taking action at given state x_t
         # 정책 기반 행동 선택
         prob = sigmoid(x - s, tau)
@@ -131,18 +141,18 @@ def train_agent(env, config):
         x_next = obs[0]
         
         # step 3 : attain realized demand and adaptively estimate the distributional parameters
-        d = x_next - x - a
+        d = x + a - x_next
         demand_history.append(max(d, 0))  # 수요는 비음수
         alpha_hat, beta_hat = estimate_gamma_params(demand_history)
 
         # step 4 : update the relative value function
-        w, rho = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t)
+        w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t)
 
         rho_history.append(rho)
         w_history.append(w)
 
         # step 5 : update the policy parameters
-        s, S = update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau)
+        s, S, V_zs, V_zS = update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau)
 
         s_history.append(s)
         S_history.append(S)
@@ -150,6 +160,15 @@ def train_agent(env, config):
         # step 6 : update the hyperparameters
         sigma *= sigma_decay
         tau *= tau_decay
+
+        debug_dict["V_x"].append(V_x)
+        debug_dict["V_x_next"].append(V_x_next)
+        debug_dict["V_zs"].append(V_zs)
+        debug_dict["V_zS"].append(V_zS)
+        debug_dict["delta"].append(delta)
+        debug_dict["tau"].append(tau)
+        debug_dict["sigma"].append(sigma)
+        debug_dict["x"].append(x)
 
         x = x_next
         if t % 100 == 0:
@@ -181,10 +200,45 @@ def plot_training_history(s_history, S_history, rho_history):
     plt.tight_layout()
     plt.show()
 
+def plot_debug_variables(debug_dict):
+    steps = np.arange(len(debug_dict["V_x"]))
+    plt.figure(figsize=(14, 10))
+
+    plt.subplot(3, 2, 1)
+    plt.plot(steps, debug_dict["V_x"], label="V_x")
+    plt.plot(steps, debug_dict["V_x_next"], label="V_x_next")
+    plt.legend(); plt.title("Critic Values"); plt.grid(True)
+
+    plt.subplot(3, 2, 2)
+    plt.plot(steps, debug_dict["delta"], label="TD Error")
+    plt.title("TD Error"); plt.grid(True)
+
+    plt.subplot(3, 2, 3)
+    plt.plot(steps, debug_dict["V_zs"], label="V_zs")
+    plt.plot(steps, debug_dict["V_zS"], label="V_zS")
+    plt.legend(); plt.title("V(z_s), V(z_S)"); plt.grid(True)
+
+    plt.subplot(3, 2, 4)
+    plt.plot(steps, debug_dict["tau"], label="tau")
+    plt.plot(steps, debug_dict["sigma"], label="sigma")
+    plt.legend(); plt.title("Hyperparameters"); plt.grid(True)
+
+    plt.subplot(3, 2, 5)
+    plt.plot(steps, debug_dict["x"], label="x")
+    plt.title("Inventory state x"); plt.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
 if __name__ == "__main__":
 
     rho_history, w_history = [], []
     s_history, S_history = [], []
+
+    debug_dict = {
+        "V_x": [], "V_x_next": [], "V_zs": [], "V_zS": [],
+        "delta": [], "tau": [], "sigma": [], "x": []
+    }
 
     with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -192,4 +246,5 @@ if __name__ == "__main__":
     env = InventoryEnv(config)
     train_agent(env, config)
 
-    plot_training_history(s_history, S_history, rho_history)
+    plot_debug_variables(debug_dict)
+    # plot_training_history(s_history, S_history, rho_history)
