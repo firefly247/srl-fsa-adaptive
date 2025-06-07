@@ -16,6 +16,11 @@ class InventoryEnv(gym.Env):
         self.u = config.get("unit_cost", 0.3)
         self.max_inventory = config.get("max_inventory", 50)
 
+        self.regime_switching = config.get("regime_switching", False)
+        self.switching_period = config.get("switching_period", 1000)
+        self.regime_sequence = config.get("regime_sequence", [[2.0, 1.0]])
+        self.t = 0  # time step
+
         # 상태 공간: 재고 수준 하나 (연속형)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
 
@@ -38,8 +43,12 @@ class InventoryEnv(gym.Env):
             order_quantity = 0
             ordering_cost = 0
 
-        # 감마 분포 수요 샘플링
+        if self.regime_switching:
+            regime_index = (self.t // self.switching_period) % len(self.regime_sequence)
+            self.alpha, self.beta = self.regime_sequence[regime_index]
+
         demand = np.random.gamma(self.alpha, 1.0 / self.beta)
+        self.t += 1
         next_state = self.state + order_quantity - demand
 
         # 비용 계산

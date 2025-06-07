@@ -1,6 +1,8 @@
 import numpy as np
+from loguru import logger
 import yaml
 from inventory_env import InventoryEnv
+import matplotlib.pyplot as plt
 
 def phi(x):
     return np.array([x, x**2, x**3, x**4])
@@ -99,7 +101,10 @@ def train_agent(env, config):
     b2 = lambda t: config["b2"]
     gamma1 = lambda t: config["gamma1_base"] / (1 + config["gamma_decay"] * t)
     gamma2 = lambda t: config["gamma2_base"] / (1 + config["gamma_decay"] * t)
-    episodes = config["episodes"]
+    
+    warmup_period = config.get("warmup_period", 60)
+    train_period = config.get("train_period", 1000)
+    episodes = len(config["regime_sequence"]) * (warmup_period + train_period)
 
     w = np.zeros(4)
     demand_history = []
@@ -133,8 +138,14 @@ def train_agent(env, config):
         # step 4 : update the relative value function
         w, rho = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t)
 
+        rho_history.append(rho)
+        w_history.append(w)
+
         # step 5 : update the policy parameters
         s, S = update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau)
+
+        s_history.append(s)
+        S_history.append(S)
 
         # step 6 : update the hyperparameters
         sigma *= sigma_decay
@@ -144,10 +155,41 @@ def train_agent(env, config):
         if t % 100 == 0:
             print(f"[{t}] Inventory: {x:.2f}, Reward: {reward:.2f}, s: {s:.2f}, S: {S:.2f}")
 
+def plot_training_history(s_history, S_history, rho_history):
+    steps = np.arange(len(s_history))
+
+    plt.figure(figsize=(12, 5))
+
+    # (1) s, S plot
+    plt.subplot(1, 2, 1)
+    plt.plot(steps, s_history, label='s', color='blue')
+    plt.plot(steps, S_history, label='S', color='orange')
+    plt.xlabel("Timestep")
+    plt.ylabel("Policy Parameter Value")
+    plt.title("Policy Parameters: s and S")
+    plt.legend()
+    plt.grid(True)
+
+    # (2) rho (average reward estimate)
+    plt.subplot(1, 2, 2)
+    plt.plot(steps, rho_history, color='green')
+    plt.xlabel("Timestep")
+    plt.ylabel("rho (Avg. Reward)")
+    plt.title("Estimated Average Reward (rho)")
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == "__main__":
-    with open("config.yaml", "r") as f:
+
+    rho_history, w_history = [], []
+    s_history, S_history = [], []
+
+    with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     env = InventoryEnv(config)
     train_agent(env, config)
+
+    plot_training_history(s_history, S_history, rho_history)
