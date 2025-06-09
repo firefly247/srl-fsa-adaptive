@@ -9,7 +9,7 @@ max_inventory: 50
 
 # training
 warmup_period: 60
-train_period: 1000
+train_period: 500
 s_init: 2.0
 S_init: 4.0
 rho_init: 0.0
@@ -26,9 +26,12 @@ gamma_decay: 0.01
 # regime switching
 regime_switching: true
 regime_sequence:
-  - [2.0, 1.0]
-  - [4.0, 0.7071]
-  - [1.25, 0.3953]
-  - [8.0, 1.0]
-  - [1.5, 0.4330]
-  - [16.0, 1.4142]
+  - [4.0, 2.0]    # Case 1    (2,1)
+  - [0.8, 0.4]    # Case 2    (2,5)
+  - [0.4, 0.2]    # Case 3    (2,10)
+  - [25.0, 5.0]   # Case 4    (5,1)
+  - [5.0, 1.0]    # Case 5    (5,5)
+  - [2.5, 0.5]    # Case 6    (5,10)
+  - [100.0, 10.0] # Case 7    (10,1)
+  - [20.0, 2.0]   # Case 8    (10,5)
+  - [10.0, 1.0]   # Case 9    (10,10)

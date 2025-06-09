@@ -16,7 +16,7 @@ class InventoryEnv(gym.Env):
         self.u = config.get("unit_cost", 0.3)
         self.max_inventory = config.get("max_inventory", 50)
 
-        self.regime_switching = config.get("regime_switching", False)
+        self.regime_switching = config.get("regime_switching", True)
         self.switching_period = config.get("switching_period", 1000)
         self.regime_sequence = config.get("regime_sequence", [[2.0, 1.0]])
         self.t = 0  # time step
@@ -44,7 +44,7 @@ class InventoryEnv(gym.Env):
             ordering_cost = 0
 
         if self.regime_switching:
-            regime_index = (self.t // self.switching_period) % len(self.regime_sequence)
+            regime_index = (self.t // self.switching_period) 
             self.alpha, self.beta = self.regime_sequence[regime_index]
 
         demand = np.random.gamma(self.alpha, 1.0 / self.beta)

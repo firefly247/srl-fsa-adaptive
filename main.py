@@ -4,6 +4,7 @@ import yaml
 from inventory_env import InventoryEnv
 import matplotlib.pyplot as plt
 
+ 
 def phi(x):
     x = x / 50.0  # 예: max_inventory = 50 기준
     x = np.clip(x, -10, 10)  # prevent x^4 explosion
@@ -100,6 +101,13 @@ def update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau):
     return s, S, V_zs, V_zS
 
 def train_agent(env, config):
+    rho_history, w_history = [], []
+    s_history, S_history = [], []
+
+    debug_dict = {
+        "V_x": [], "V_x_next": [], "V_zs": [], "V_zS": [],
+        "delta": [], "tau": [], "sigma": [], "x": []
+    }
     
     # config에서 초기 파라미터 불러오기
     s = config["s_init"]
@@ -177,6 +185,7 @@ def train_agent(env, config):
         if t % 100 == 0:
             print(f"[{t}] Inventory: {x:.2f}, Reward: {reward:.2f}, s: {s:.2f}, S: {S:.2f}")
 
+    return debug_dict
 def plot_training_history(s_history, S_history, rho_history):
     steps = np.arange(len(s_history))
 
