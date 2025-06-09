@@ -93,8 +93,8 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
     S -= b1(t) * beta_hat * (1 - f_xs) * ((-1) ** eta_S) * V_zS
     s -= b2(t) * df_dy * ((-1) ** eta_s) * V_zs
 
-    S = np.clip(S, 0, max_inventory)  # Ensure S <= max_inventory
-    s = np.clip(s, 0, S)  # Ensure s <= S
+    S = np.clip(S, -np.inf, max_inventory)  # Ensure S <= max_inventory
+    s = np.clip(s, -np.inf, S)  # Ensure s <= S
 
     return s, S, V_zs, V_zS
 
