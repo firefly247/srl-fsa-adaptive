@@ -3,6 +3,7 @@ from loguru import logger
 import yaml
 from inventory_env import InventoryEnv
 import matplotlib.pyplot as plt
+from scipy.stats import gamma
 
 def phi(x):
     x = x / 50.0  # 예: max_inventory = 50 기준
@@ -51,16 +52,16 @@ def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t):
     w += gamma1(t) * delta * phi(x)
     rho += gamma2(t) * (reward + V_x_next - V_x - rho)
 
-    logger.info(
-        f"[{t}] x={x:.4f}, V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
-        f"delta={delta:.4f}, "
-        f"w={np.array2string(w, precision=4)}, "
-        f"rho={rho:.4f}"
-    )
+    # logger.info(
+    #     f"[{t}] x={x:.4f}, V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
+    #     f"delta={delta:.4f}, "
+    #     f"w={np.array2string(w, precision=4)}, "
+    #     f"rho={rho:.4f}"
+    # )
 
     return w, rho, V_x, V_x_next, delta
 
-def update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau):
+def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde):
     """
     Implements policy update as described in SRL-FSA (Park et al. 2023), Algorithm 1 Step 5.
 
@@ -81,9 +82,18 @@ def update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau):
     eta_S = np.random.binomial(1, 0.5)
     eta_s = np.random.binomial(1, 0.5)
 
-    # Sampling z_s and z_S based on transition model (simplified)
-    z_s = x + 1 if eta_s == 0 else x - 1
-    z_S = x + 1 if eta_S == 0 else x - 1
+    # Sampling z_s and z_S based on transition model
+    d = S_tilde - x_next
+    if d < 0:
+        d = 0
+    logger.debug(f"[{t}] Demand d: {d:.4f}, S_tilde: {S_tilde:.4f}, x_next: {x_next:.4f}")
+    # S를 조금 바꾸었을 때 그것이 x → x'로 갈 확률을 얼마나 바꾸는지 계산
+    # dP(x'|S_tilde)/dS를 직접 구하기 어려우므로 샘플 기반으로 근사
+    # S tilde → x'로 가는 확률을 구하자
+    z_S = (1 - eta_S) * gamma.pdf(d, a=alpha_hat-1, scale=1/beta_hat) + eta_S * gamma.pdf(d, a=alpha_hat, scale=1/beta_hat)
+    # s를 조금 바꾸었을 때 그것이 x → x'로 갈 확률을 얼마나 바꾸는지 계산
+    z_s = (1 - eta_s) * gamma.pdf(d, a=alpha_hat-1, scale=1/beta_hat) + eta_s * gamma.pdf(d, a=alpha_hat, scale=1/beta_hat)
+    logger.debug(f"[{t}] z_s: {z_s:.4f}, z_S: {z_S:.4f}, eta_s: {eta_s}, eta_S: {eta_S}")
 
     # Compute policy function f(x, s) and its derivative
     f_xs = sigmoid(x - s, tau)
@@ -125,37 +135,48 @@ def train_agent(env, config):
     obs = env.reset()
     x = obs[0]
 
-    for t in range(100):
+    for t in range(10):
         # step 2 : observe the transitioned state and corresponding reward after taking action at given state x_t
         # 정책 기반 행동 선택
+        # 현재 재고 x가 reorder point s보다 작은지 soft하게 판별
+        # deterministic (𝑠, 𝑆) 정책은 MDP에서 단일 커뮤니케이션 클래스를 만들지 않기 때문에 → 일반적인 RL convergence 조건을 만족하지 않음
+        # 그래서 noise와 soft decision을 추가해서 → 모든 상태 reachable하게 만듦
         prob = sigmoid(x - s, tau)
-        if np.random.rand() < prob:
-            noise = np.random.normal(0, sigma)
-            a = max(S + noise - x, 0)
-        else:
-            a = 0
 
-        # 행동 구성: [flag, S]
-        order_flag = 1 if a > 0 else 0 # 주문을 하면 order_flag는 1, 아니면 0
-        action = np.array([order_flag, S], dtype=np.float32)
+        if np.random.rand() > prob: # 확률적으로 주문 여부 결정
+            noise = np.random.normal(0, sigma)
+            S_tilde = S + noise
+            a = max(S_tilde - x, 0) # 약간의 noise를 추가한 S tilde까지 주문
+        else:
+            a = 0 # 주문 안함
+
+        logger.info(f"[{t}] x: {x:.2f}, prob: {prob:.2f}, S: {S:.2f}, Action: {a:.2f}, s: {s:.2f}")
 
         # 환경 상호작용
-        obs, reward, done, _ = env.step(action)
-        x_next = obs[0]
+        d, x_next, reward = env.step(a)
+
+        logger.info(f"[{t}] Demand: {d:.2f}, Next State: {x_next:.2f}, Reward: {reward:.2f}")
         
         # step 3 : attain realized demand and adaptively estimate the distributional parameters
-        d = x + a - x_next
         demand_history.append(max(d, 0))  # 수요는 비음수
         alpha_hat, beta_hat = estimate_gamma_params(demand_history)
 
+        logger.info(f"[{t}] Estimated alpha: {alpha_hat:.4f}, beta: {beta_hat:.4f}")
+        
         # step 4 : update the relative value function
         w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t)
 
+        logger.info(f"[{t}] Updated w: {np.array2string(w, precision=4)}, "
+                    f"rho: {rho:.4f}, V_x: {V_x:.4f}, V_x_next: {V_x_next:.4f}, "
+                    f"delta: {delta:.4f}")
+        
         rho_history.append(rho)
         w_history.append(w)
 
         # step 5 : update the policy parameters
-        s, S, V_zs, V_zS = update_policy_parameters(s, S, x, w, b1, b2, t, alpha_hat, beta_hat, tau)
+        s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde)
+
+        logger.info(f"[{t}] Updated s: {s:.4f}, S: {S:.4f}, V_zs: {V_zs:.4f}, V_zS: {V_zS:.4f}")
 
         s_history.append(s)
         S_history.append(S)
@@ -174,8 +195,7 @@ def train_agent(env, config):
         debug_dict["x"].append(x)
 
         x = x_next
-        if t % 100 == 0:
-            print(f"[{t}] Inventory: {x:.2f}, Reward: {reward:.2f}, s: {s:.2f}, S: {S:.2f}")
+        
 
 def plot_training_history(s_history, S_history, rho_history):
     steps = np.arange(len(s_history))

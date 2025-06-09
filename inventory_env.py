@@ -31,16 +31,10 @@ class InventoryEnv(gym.Env):
         self.reset()
 
     def step(self, action):
-        order_flag, target_inventory = action
-        order_flag = 1 if order_flag >= 0.5 else 0
-        target_inventory = np.clip(target_inventory, 0, self.max_inventory)
-
         # 주문 수행
-        if order_flag:
-            order_quantity = max(target_inventory - self.state, 0)
-            ordering_cost = self.K + self.u * order_quantity
+        if action > 0:
+            ordering_cost = self.K + self.u * action
         else:
-            order_quantity = 0
             ordering_cost = 0
 
         if self.regime_switching:
@@ -49,7 +43,7 @@ class InventoryEnv(gym.Env):
 
         demand = np.random.gamma(self.alpha, 1.0 / self.beta)
         self.t += 1
-        next_state = self.state + order_quantity - demand
+        next_state = self.state + action - demand
 
         # 비용 계산
         holding_cost = self.h * max(next_state, 0)
@@ -59,7 +53,7 @@ class InventoryEnv(gym.Env):
         reward = -total_cost  # 보상은 비용의 음수
         self.state = next_state
 
-        return np.array([self.state], dtype=np.float32), reward, False, {}
+        return demand, self.state, reward
 
     def reset(self):
         self.state = 0.0  # 초기 재고는 0
