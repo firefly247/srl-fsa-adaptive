@@ -17,8 +17,8 @@ sigma: 0.1
 tau: 0.1
 sigma_decay: 0.99
 tau_decay: 0.99
-b1: 0.01
-b2: 0.01
+b1: 0.1
+b2: 0.1
 gamma1_base: 0.1
 gamma2_base: 0.05
 gamma_decay: 0.01
