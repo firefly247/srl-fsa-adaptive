@@ -1,6 +1,7 @@
 import numpy as np
 import gym
 from gym import spaces
+from loguru import logger
 
 class InventoryEnv(gym.Env):
 
@@ -14,42 +15,37 @@ class InventoryEnv(gym.Env):
         self.b = config.get("backlog_cost", 0.5)
         self.K = config.get("setup_cost", 0.1)
         self.u = config.get("unit_cost", 0.3)
-        self.max_inventory = config.get("max_inventory", 50)
+        self.phi_scale = config.get("phi_scale", 50)
 
         self.regime_switching = config.get("regime_switching", True)
         self.switching_period = config.get("switching_period", 1000)
         self.regime_sequence = config.get("regime_sequence", [[2.0, 1.0]])
         self.t = 0  # time step
 
-        # 상태 공간: 재고 수준 하나 (연속형)
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
-
-        # 행동 공간: [주문 여부 flag (0~1), 목표재고수준 S]
-        self.action_space = spaces.Box(low=np.array([0.0, 0.0]),
-                                       high=np.array([1.0, float(self.max_inventory)]), dtype=np.float32)
-
         self.reset()
 
+    def truncated_poisson_sample(self, lam, max_val=7):
+        while True:
+            sample = np.random.poisson(lam)
+            if sample <= max_val:
+                return sample
+        
     def step(self, action):
-        order_flag, target_inventory = action
-        order_flag = 1 if order_flag >= 0.5 else 0
-        target_inventory = np.clip(target_inventory, 0, self.max_inventory)
-
         # 주문 수행
-        if order_flag:
-            order_quantity = max(target_inventory - self.state, 0)
-            ordering_cost = self.K + self.u * order_quantity
+        if action > 0:
+            ordering_cost = self.K + self.u * action
         else:
-            order_quantity = 0
             ordering_cost = 0
 
         if self.regime_switching:
             regime_index = (self.t // self.switching_period) 
             self.alpha, self.beta = self.regime_sequence[regime_index]
 
+        logger.info(f"[{self.t}] alpha: {self.alpha}, beta: {self.beta}")
         demand = np.random.gamma(self.alpha, 1.0 / self.beta)
+        # demand = self.truncated_poisson_sample(self.alpha)
         self.t += 1
-        next_state = self.state + order_quantity - demand
+        next_state = self.state + action - demand
 
         # 비용 계산
         holding_cost = self.h * max(next_state, 0)
@@ -59,7 +55,7 @@ class InventoryEnv(gym.Env):
         reward = -total_cost  # 보상은 비용의 음수
         self.state = next_state
 
-        return np.array([self.state], dtype=np.float32), reward, False, {}
+        return demand, self.state, reward
 
     def reset(self):
         self.state = 0.0  # 초기 재고는 0
