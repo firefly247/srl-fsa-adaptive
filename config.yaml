@@ -1,26 +1,25 @@
 # environment
-alpha: 2.0
-beta: 1.0
+alpha: 4.0
+beta: 0.7071
 holding_cost: 0.1
 backlog_cost: 0.5
 setup_cost: 0.1
 unit_cost: 0.3
-max_inventory: 50
+max_inventory: 10
 
 # training
 warmup_period: 60
 train_period: 1000
-s_init: 2.0
-S_init: 4.0
+s_init: -5.0
+S_init: 10.0
 rho_init: 0.0
-sigma_init: 4
+sigma_init: 1
 tau_init: 1
 
 # regime switching
 regime_switching: true
 regime_sequence:
-  - [2.0, 1.0]
-  # - [4.0, 0.7071]        # √2 / 2 ≈ 0.7071
+  - [4.0, 0.7071]        # √2 / 2 ≈ 0.7071
   # - [1.25, 0.3953]       # √10 / 8 ≈ 0.3953
   # - [8.0, 1.0]
   # - [1.5, 0.4330]        # √3 / 4 ≈ 0.4330

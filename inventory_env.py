@@ -30,6 +30,12 @@ class InventoryEnv(gym.Env):
 
         self.reset()
 
+    def truncated_poisson_sample(self, lam, max_val=7):
+        while True:
+            sample = np.random.poisson(lam)
+            if sample <= max_val:
+                return sample
+        
     def step(self, action):
         # 주문 수행
         if action > 0:
@@ -41,7 +47,8 @@ class InventoryEnv(gym.Env):
             regime_index = (self.t // self.switching_period) % len(self.regime_sequence)
             self.alpha, self.beta = self.regime_sequence[regime_index]
 
-        demand = np.random.gamma(self.alpha, 1.0 / self.beta)
+        # demand = np.random.gamma(self.alpha, 1.0 / self.beta)
+        demand = self.truncated_poisson_sample(self.alpha)  # 포아송 분포로 수요 생성
         self.t += 1
         next_state = self.state + action - demand
 

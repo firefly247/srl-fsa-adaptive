@@ -4,7 +4,8 @@ import yaml
 from inventory_env import InventoryEnv
 import matplotlib.pyplot as plt
 
-def phi(x):
+def phi(x, c):
+    x = x / c
     return np.array([x, x**2, x**3, x**4])
 
 def sigmoid(x, t, tau):
@@ -23,13 +24,13 @@ def estimate_gamma_params(samples):
     beta_hat = mean / var if var > 0 else 1.0
     return alpha_hat, beta_hat
 
-def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t):
-    V_x = w @ phi(x)
-    V_x_next = w @ phi(x_next)
+def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, max_inventory):
+    V_x = w @ phi(x, max_inventory)
+    V_x_next = w @ phi(x_next, max_inventory)
     delta = reward - rho + V_x_next - V_x
 
-    w += gamma1(t) * delta * phi(x)
-    rho += gamma2(t) * (reward + V_x_next - V_x - rho)
+    w += gamma1(t) * delta * phi(x, max_inventory)
+    rho += gamma2 * (reward + V_x_next - V_x - rho)
 
     return w, rho, V_x, V_x_next, delta
 
@@ -42,15 +43,15 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
     # Sampling z_s and z_S based on transition model
     # z_S는 S를 조금 바꾸었다면 다음 상태 x'가 어떻게 나왔을지 추정하는 가상의 x' (x'는 실제 trajectory에서 관측된 상태)
     # dP(x'|S_tilde)/dS를 직접 구하기 어려우므로 샘플 기반으로 근사
-    if eta_S == 0:
+    if eta_S == 0: # S는 주문이 발생했을 때만 영향을 미치는 파라미터, 주문을 안했으면 S가 사용되지도 않고 학습할 필요도 없으므로 주문이 일어난 경우의 전이확률만 고려
         z_S = S_tilde - np.random.gamma(alpha_hat-1, 1 / beta_hat)
     else:
         z_S = S_tilde - np.random.gamma(alpha_hat, 1 / beta_hat)
 
-    if eta_s == 0:
-        z_s = x - np.random.gamma(alpha_hat-1, 1 / beta_hat)
+    if eta_s == 0: # s는 주문 여부를 결정하는 임계점으로 행동을 하지 않은 경우/한 경우 모두 반영 필요
+        z_s = x - np.random.gamma(alpha_hat-1, 1 / beta_hat) # 주문 안한 경우
     else:
-        z_s = S_tilde - np.random.gamma(alpha_hat, 1 / beta_hat)
+        z_s = S_tilde - np.random.gamma(alpha_hat, 1 / beta_hat) # 주문한 경우
 
     # s를 조금 바꾸었을 때 그것이 x → x'로 갈 확률을 얼마나 바꾸는지 계산
     logger.info(f"[{t}] z_s: {z_s:.4f}, z_S: {z_S:.4f}, eta_s: {eta_s}, eta_S: {eta_S}")
@@ -60,8 +61,8 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
     df_dy = sigmoid_derivative(x - s, t, tau)
 
     # Get value estimates from critic
-    V_zs = w @ phi(z_s)
-    V_zS = w @ phi(z_S)
+    V_zs = w @ phi(z_s, max_inventory)
+    V_zS = w @ phi(z_S, max_inventory)
 
     # Apply policy update rules as per SRL-FSA
     S -= b1(t) * beta_hat * (1 - f_xs) * ((-1) ** eta_S) * V_zS
@@ -83,10 +84,10 @@ def train_agent(env, config):
     b1 = lambda t: 0.01 / (np.floor(t/10) + 1)
     b2 = lambda t: 0.01 / (np.floor(t/20) + 1) ** 0.9
     gamma1 = lambda t: 0.1 / (t + 1) ** 0.7
-    gamma2 = lambda t: 0.01
+    gamma2 = 0.01
 
-    tau = lambda t: config["tau_init"] * (np.floor(t/10) + 1) ** 0.8
-    sigma = lambda t: config["sigma_init"] * (np.floor(t/10) + 1) ** 0.8
+    tau = lambda t: config["tau_init"] / (np.floor(t/10) + 1) ** 0.8
+    sigma = lambda t: config["sigma_init"] / (np.floor(t/10) + 1) ** 0.8
     
     warmup_period = config.get("warmup_period", 60)
     train_period = config.get("train_period", 1000)
@@ -98,7 +99,7 @@ def train_agent(env, config):
     obs = env.reset()
     x = obs[0]
 
-    for t in range(100):
+    for t in range(1000):
         # step 2 : observe the transitioned state and corresponding reward after taking action at given state x_t
         # 정책 기반 행동 선택
         # 현재 재고 x가 reorder point s보다 작은지 soft하게 판별
@@ -106,6 +107,7 @@ def train_agent(env, config):
         # 그래서 noise와 soft decision을 추가해서 → 모든 상태 reachable하게 만듦
         prob = sigmoid(x - s, t, tau)
 
+        S_tilde = S
         if np.random.rand() > prob: # 확률적으로 주문 여부 결정
             noise = np.random.normal(0, sigma(t))
             S_tilde = S + noise
@@ -119,26 +121,30 @@ def train_agent(env, config):
         # step 3 : attain realized demand and adaptively estimate the distributional parameters
         demand_history.append(max(d, 0))  # 수요는 비음수
         alpha_hat, beta_hat = estimate_gamma_params(demand_history)
-        logger.info(f"[{t}] Demand: {d:.4f}, Estimated Params: alpha={alpha_hat:.4f}, beta={beta_hat:.4f}")
+        logger.info(f"[{t}] Demand: {d:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}, x={x:.4f}, x_next={x_next:.4f}, a={a:.4f}")
 
         # step 4 : update the relative value function
-        w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t)
+        w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, max_inventory)
         
         rho_history.append(rho)
         w_history.append(w)
+
+        logger.info(
+            f"[{t}] "
+            f"w={w}, "
+            f"rho={rho:.4f}, "
+            f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
+            f"delta={delta:.4f}, "
+        )
 
         # step 5 : update the policy parameters
         s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, max_inventory)
 
         logger.info(
             f"[{t}] "
-            f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
-            f"rho={rho:.4f}, "
             f"s={s:.4f}, S={S:.4f}, "
             f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
-            f"delta={delta:.4f}, "
             f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
-            f"tau={tau(t):.4f}, sigma={sigma(t):.4f}"
         )
 
         s_history.append(s)
@@ -149,40 +155,13 @@ def train_agent(env, config):
         debug_dict["V_zs"].append(V_zs)
         debug_dict["V_zS"].append(V_zS)
         debug_dict["delta"].append(delta)
-        debug_dict["tau"].append(tau)
-        debug_dict["sigma"].append(sigma)
+        debug_dict["tau"].append(tau(t))
+        debug_dict["sigma"].append(sigma(t))
         debug_dict["x"].append(x)
 
         x = x_next
-        
 
-def plot_training_history(s_history, S_history, rho_history):
-    steps = np.arange(len(s_history))
-
-    plt.figure(figsize=(12, 5))
-
-    # (1) s, S plot
-    plt.subplot(1, 2, 1)
-    plt.plot(steps, s_history, label='s', color='blue')
-    plt.plot(steps, S_history, label='S', color='orange')
-    plt.xlabel("Timestep")
-    plt.ylabel("Policy Parameter Value")
-    plt.title("Policy Parameters: s and S")
-    plt.legend()
-    plt.grid(True)
-
-    # (2) rho (average reward estimate)
-    plt.subplot(1, 2, 2)
-    plt.plot(steps, rho_history, color='green')
-    plt.xlabel("Timestep")
-    plt.ylabel("rho (Avg. Reward)")
-    plt.title("Estimated Average Reward (rho)")
-    plt.grid(True)
-
-    plt.tight_layout()
-    plt.show()
-
-def plot_debug_variables(debug_dict):
+def plot_debug_variables(debug_dict, s_history, S_history):
     steps = np.arange(len(debug_dict["V_x"]))
     plt.figure(figsize=(14, 10))
 
@@ -209,6 +188,15 @@ def plot_debug_variables(debug_dict):
     plt.plot(steps, debug_dict["x"], label="x")
     plt.title("Inventory state x"); plt.grid(True)
 
+    plt.subplot(3, 2, 6)
+    plt.plot(steps, s_history, label='s', color='blue')
+    plt.plot(steps, S_history, label='S', color='orange')
+    plt.xlabel("Timestep")
+    plt.ylabel("Policy Parameter Value")
+    plt.title("Policy Parameters: s and S")
+    plt.legend()
+    plt.grid(True)
+
     plt.tight_layout()
     plt.show()
 
@@ -228,5 +216,4 @@ if __name__ == "__main__":
     env = InventoryEnv(config)
     train_agent(env, config)
 
-    # plot_debug_variables(debug_dict)
-    plot_training_history(s_history, S_history, rho_history)
+    plot_debug_variables(debug_dict, s_history, S_history)
