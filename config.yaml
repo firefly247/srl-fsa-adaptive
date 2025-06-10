@@ -13,15 +13,8 @@ train_period: 1000
 s_init: 2.0
 S_init: 4.0
 rho_init: 0.0
-sigma: 0.1
-tau: 0.1
-sigma_decay: 0.99
-tau_decay: 0.99
-b1: 0.1
-b2: 0.1
-gamma1_base: 0.1
-gamma2_base: 0.05
-gamma_decay: 0.01
+sigma_init: 4
+tau_init: 1
 
 # regime switching
 regime_switching: true

@@ -5,16 +5,14 @@ from inventory_env import InventoryEnv
 import matplotlib.pyplot as plt
 
 def phi(x):
-    x = x/5
     return np.array([x, x**2, x**3, x**4])
 
-def sigmoid(x, tau):
-    z = np.clip(x / tau, -100, 100)  # prevent overflow in exp
-    return 1 / (1 + np.exp(-z))
+def sigmoid(x, t, tau):
+    return 1 / (1 + np.exp(-x / tau(t)))
 
-def sigmoid_derivative(x, tau):
-    s = sigmoid(x, tau)
-    return (1 / tau) * s * (1 - s)
+def sigmoid_derivative(x, t, tau):
+    s = sigmoid(x, t, tau)
+    return (1 / tau(t)) * s * (1 - s)
 
 def estimate_gamma_params(samples):
     if len(samples) < 2:
@@ -26,36 +24,12 @@ def estimate_gamma_params(samples):
     return alpha_hat, beta_hat
 
 def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t):
-    """
-    Update the value function weights and average reward using TD error.
-
-    Args:
-        w: critic weights
-        rho: average reward estimate
-        x, x_next: current and next state
-        reward: observed reward
-        phi: feature mapping function
-        gamma1, gamma2: learning rate schedules
-        t: current timestep
-
-    Returns:
-        updated w, rho, delta
-    """
     V_x = w @ phi(x)
     V_x_next = w @ phi(x_next)
     delta = reward - rho + V_x_next - V_x
 
-    delta = np.clip(delta, -10.0, 10.0)
-
     w += gamma1(t) * delta * phi(x)
     rho += gamma2(t) * (reward + V_x_next - V_x - rho)
-
-    # logger.info(
-    #     f"[{t}] x={x:.4f}, V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
-    #     f"delta={delta:.4f}, "
-    #     f"w={np.array2string(w, precision=4)}, "
-    #     f"rho={rho:.4f}"
-    # )
 
     return w, rho, V_x, V_x_next, delta
 
@@ -82,8 +56,8 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
     logger.info(f"[{t}] z_s: {z_s:.4f}, z_S: {z_S:.4f}, eta_s: {eta_s}, eta_S: {eta_S}")
 
     # Compute policy function f(x, s) and its derivative
-    f_xs = sigmoid(x - s, tau)
-    df_dy = sigmoid_derivative(x - s, tau)
+    f_xs = sigmoid(x - s, t, tau)
+    df_dy = sigmoid_derivative(x - s, t, tau)
 
     # Get value estimates from critic
     V_zs = w @ phi(z_s)
@@ -105,15 +79,14 @@ def train_agent(env, config):
     s = config["s_init"]
     S = config["S_init"]
     rho = config["rho_init"]
-    sigma = config["sigma"]
-    tau = config["tau"]
-    sigma_decay = config["sigma_decay"]
-    tau_decay = config["tau_decay"]
 
-    b1 = lambda t: config["b1"]
-    b2 = lambda t: config["b2"]
-    gamma1 = lambda t: config["gamma1_base"] / (1 + config["gamma_decay"] * t)
-    gamma2 = lambda t: config["gamma2_base"] / (1 + config["gamma_decay"] * t)
+    b1 = lambda t: 0.01 / (np.floor(t/10) + 1)
+    b2 = lambda t: 0.01 / (np.floor(t/20) + 1) ** 0.9
+    gamma1 = lambda t: 0.1 / (t + 1) ** 0.7
+    gamma2 = lambda t: 0.01
+
+    tau = lambda t: config["tau_init"] * (np.floor(t/10) + 1) ** 0.8
+    sigma = lambda t: config["sigma_init"] * (np.floor(t/10) + 1) ** 0.8
     
     warmup_period = config.get("warmup_period", 60)
     train_period = config.get("train_period", 1000)
@@ -131,10 +104,10 @@ def train_agent(env, config):
         # 현재 재고 x가 reorder point s보다 작은지 soft하게 판별
         # deterministic (𝑠, 𝑆) 정책은 MDP에서 단일 커뮤니케이션 클래스를 만들지 않기 때문에 → 일반적인 RL convergence 조건을 만족하지 않음
         # 그래서 noise와 soft decision을 추가해서 → 모든 상태 reachable하게 만듦
-        prob = sigmoid(x - s, tau)
+        prob = sigmoid(x - s, t, tau)
 
         if np.random.rand() > prob: # 확률적으로 주문 여부 결정
-            noise = np.random.normal(0, sigma)
+            noise = np.random.normal(0, sigma(t))
             S_tilde = S + noise
             a = max(S_tilde - x, 0) # 약간의 noise를 추가한 S tilde까지 주문
         else:
@@ -165,15 +138,11 @@ def train_agent(env, config):
             f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
             f"delta={delta:.4f}, "
             f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
-            f"tau={tau:.4f}, sigma={sigma:.4f}"
+            f"tau={tau(t):.4f}, sigma={sigma(t):.4f}"
         )
 
         s_history.append(s)
         S_history.append(S)
-
-        # step 6 : update the hyperparameters
-        sigma *= sigma_decay
-        tau *= tau_decay
 
         debug_dict["V_x"].append(V_x)
         debug_dict["V_x_next"].append(V_x_next)
