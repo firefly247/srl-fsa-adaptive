@@ -24,17 +24,17 @@ def estimate_gamma_params(samples):
     beta_hat = mean / var if var > 0 else 1.0
     return alpha_hat, beta_hat
 
-def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, max_inventory):
-    V_x = w @ phi(x, max_inventory)
-    V_x_next = w @ phi(x_next, max_inventory)
+def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, phi_scale):
+    V_x = w @ phi(x, phi_scale)
+    V_x_next = w @ phi(x_next, phi_scale)
     delta = reward - rho + V_x_next - V_x
 
-    w += gamma1(t) * delta * phi(x, max_inventory)
+    w += gamma1(t) * delta * phi(x, phi_scale)
     rho += gamma2 * (reward + V_x_next - V_x - rho)
 
     return w, rho, V_x, V_x_next, delta
 
-def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, max_inventory):
+def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale):
 
     # Sampling Bernoulli variables (η_S and η_s)
     eta_S = np.random.binomial(1, 0.5)
@@ -61,14 +61,20 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
     df_dy = sigmoid_derivative(x - s, t, tau)
 
     # Get value estimates from critic
-    V_zs = w @ phi(z_s, max_inventory)
-    V_zS = w @ phi(z_S, max_inventory)
+    V_zs = w @ phi(z_s, phi_scale)
+    V_zS = w @ phi(z_S, phi_scale)
 
     # Apply policy update rules as per SRL-FSA
     S -= b1(t) * beta_hat * (1 - f_xs) * ((-1) ** eta_S) * V_zS
     s -= b2(t) * df_dy * ((-1) ** eta_s) * V_zs
 
-    S = np.clip(S, -np.inf, max_inventory)  # Ensure S <= max_inventory
+    logger.info(f"[{t}] S: {S:.4f}, s: {s:.4f}, "
+                f"b1(t): {b1(t):.4f}, b2(t): {b2(t):.4f}, "
+                f"f_xs: {f_xs:.4f}, df_dy: {df_dy:.4f}, "
+                f"eta_S: {eta_S}, eta_s: {eta_s}, "
+                f"V_zs: {V_zs:.4f}, V_zS: {V_zS:.4f}, ")
+
+    S = np.clip(S, -np.inf, phi_scale)  # Ensure S <= max_inventory
     s = np.clip(s, -np.inf, S)  # Ensure s <= S
 
     return s, S, V_zs, V_zS
@@ -76,7 +82,7 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
 def train_agent(env, config):
     
     # config에서 초기 파라미터 불러오기
-    max_inventory = config.get("max_inventory", 50)
+    phi_scale = config.get("phi_scale", 50)
     s = config["s_init"]
     S = config["S_init"]
     rho = config["rho_init"]
@@ -99,7 +105,7 @@ def train_agent(env, config):
     obs = env.reset()
     x = obs[0]
 
-    for t in range(1000):
+    for t in range(100):
         # step 2 : observe the transitioned state and corresponding reward after taking action at given state x_t
         # 정책 기반 행동 선택
         # 현재 재고 x가 reorder point s보다 작은지 soft하게 판별
@@ -124,7 +130,7 @@ def train_agent(env, config):
         logger.info(f"[{t}] Demand: {d:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}, x={x:.4f}, x_next={x_next:.4f}, a={a:.4f}")
 
         # step 4 : update the relative value function
-        w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, max_inventory)
+        w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, phi_scale)
         
         rho_history.append(rho)
         w_history.append(w)
@@ -138,7 +144,7 @@ def train_agent(env, config):
         )
 
         # step 5 : update the policy parameters
-        s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, max_inventory)
+        s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale)
 
         logger.info(
             f"[{t}] "
@@ -160,6 +166,8 @@ def train_agent(env, config):
         debug_dict["x"].append(x)
 
         x = x_next
+
+        logger.info("-" *30)
 
 def plot_debug_variables(debug_dict, s_history, S_history):
     steps = np.arange(len(debug_dict["V_x"]))

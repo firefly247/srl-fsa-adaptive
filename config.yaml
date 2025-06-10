@@ -5,7 +5,7 @@ holding_cost: 0.1
 backlog_cost: 0.5
 setup_cost: 0.1
 unit_cost: 0.3
-max_inventory: 10
+phi_scale:  10
 
 # training
 warmup_period: 60
