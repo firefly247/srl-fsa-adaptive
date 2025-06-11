@@ -80,25 +80,6 @@ def detect_distribution_changes(alpha_hist, beta_hist,
         if sym_kl > kl_threshold:
             change_points.append(t)
     return change_points
-  
-def plot_history(alpha_history, beta_history):
-    """시각화"""
-    steps = np.arange(1, len(alpha_history) + 1)
-    plt.figure(figsize=(10, 5))
-    plt.subplot(1, 2, 1)
-    plt.plot(steps, alpha_history, marker='.', linestyle='-')
-    plt.title('EWMA Alpha Hat Over Time')
-    plt.xlabel('Step')
-    plt.ylabel('Alpha Hat')
-    plt.grid(True)
-    plt.subplot(1, 2, 2)
-    plt.plot(steps, beta_history, marker='.', linestyle='-')
-    plt.title('EWMA Beta Hat Over Time')
-    plt.xlabel('Step')
-    plt.ylabel('Beta Hat')
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
     
 def window_kl():
     # EWMA factor
@@ -139,7 +120,25 @@ def window_kl():
 
     # 시각화
     plot_history(alpha_history, beta_history)
-
+    
+def plot_history(alpha_history, beta_history):
+    """시각화"""
+    steps = np.arange(1, len(alpha_history) + 1)
+    plt.figure(figsize=(10, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(steps, alpha_history, marker='.', linestyle='-')
+    plt.title('EWMA Alpha Hat Over Time')
+    plt.xlabel('Step')
+    plt.ylabel('Alpha Hat')
+    plt.grid(True)
+    plt.subplot(1, 2, 2)
+    plt.plot(steps, beta_history, marker='.', linestyle='-')
+    plt.title('EWMA Beta Hat Over Time')
+    plt.xlabel('Step')
+    plt.ylabel('Beta Hat')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == '__main__':
     window_kl()

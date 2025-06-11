@@ -4,6 +4,9 @@ import yaml
 from inventory_env import InventoryEnv
 import matplotlib.pyplot as plt
 
+from ewma_estimation import ewma_estimate
+from demand_change_detection import is_change_detected
+
 def phi(x, c):
     x = x / c
     return np.array([x, x**2, x**3, x**4])
@@ -34,7 +37,7 @@ def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, phi_scal
 
     return w, rho, V_x, V_x_next, delta
 
-def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale):
+def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale, max_inventory):
 
     # Sampling Bernoulli variables (η_S and η_s)
     eta_S = np.random.binomial(1, 0.5)
@@ -74,15 +77,45 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
                 f"eta_S: {eta_S}, eta_s: {eta_s}, "
                 f"V_zs: {V_zs:.4f}, V_zS: {V_zS:.4f}, ")
 
-    S = np.clip(S, -np.inf, phi_scale)  # Ensure S <= max_inventory
+    S = np.clip(S, -np.inf, max_inventory)  # Ensure S <= max_inventory
     s = np.clip(s, -np.inf, S)  # Ensure s <= S
 
     return s, S, V_zs, V_zS
 
-def train_agent(env, config):
+def warmup_agent(env, config):
+    # config에서 초기 파라미터 불러오기
+    warmup_period = config.get("warmup_period", 60)
+    estimation_lambda = config.get("estimation_lambda", 0.99)
+    m_mean = None
+    m_var = None
+    for t in range(warmup_period):
+        a = 0 # 주문 안함
+        # 환경 상호작용
+        d, x_next, reward = env.step(a)
+        # attain realized demand and adaptively estimate the distributional parameters
+        alpha_hat, beta_hat, m_mean, m_var = ewma_estimate(m_mean, m_var, d, estimation_lambda)          
+        logger.info(f"[{t}] Demand: {d:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}")
+    logger.info("-" *30)  
+    return m_mean, m_var
+
+def train_agent(env, config, m_mean, m_var):
+    est_lambda       = config.get("estimation_lambda", 0.99)   # 기본 EWMA λ
+    min_est_lambda   = config.get("min_est_lambda", 0.9)       # soft reset 시 사용할 λ
+    lambda_restore_T = config.get("lambda_restore_steps", 100) # λ를 원상 복귀시키는 데 걸리는 스텝
+
+    window = config.get("window", 100)
+    
+    detection_lambda = config.get("detection_lambda", 0.5)
+    
+    base_threshold   = config.get("threshold", 1.0)            # 기본 KL 임계치
+    adapt_factor     = config.get("adaptive_factor", 2.0)      # 리셋 직후 threshold를 얼마나 높일지
+    adapt_T          = config.get("adaptive_duration", 50)     # threshold를 높게 유지할 기간
+
+    refractory_T     = config.get("refractory_period", 200)    # 냉각기간
     
     # config에서 초기 파라미터 불러오기
     phi_scale = config.get("phi_scale", 50)
+    max_inventory = config.get("max_inventory", 1000)
     s = config["s_init"]
     S = config["S_init"]
     rho = config["rho_init"]
@@ -91,19 +124,20 @@ def train_agent(env, config):
     b2 = lambda t: 10 / (np.floor(t/20) + 1) ** 0.9
     gamma1 = lambda t: 0.1 / (t + 1) ** 0.7
     gamma2 = 0.01
-
     tau = lambda t: config["tau_init"] / (np.floor(t/10) + 1) ** 0.8
     sigma = lambda t: config["sigma_init"] / (np.floor(t/10) + 1) ** 0.8
     
-    warmup_period = config.get("warmup_period", 60)
     train_period = config.get("train_period", 1000)
-    episodes = len(config["regime_sequence"]) * (warmup_period + train_period)
+    episodes = len(config["regime_sequence"]) * (train_period)
 
     w = np.zeros(4)
-    demand_history = []
+    t_reset = 0
 
     obs = env.reset()
     x = obs[0]
+    
+    alpha_history = []
+    beta_history  = []
 
     for t in range(episodes):
         # step 2 : observe the transitioned state and corresponding reward after taking action at given state x_t
@@ -111,6 +145,17 @@ def train_agent(env, config):
         # 현재 재고 x가 reorder point s보다 작은지 soft하게 판별
         # deterministic (𝑠, 𝑆) 정책은 MDP에서 단일 커뮤니케이션 클래스를 만들지 않기 때문에 → 일반적인 RL convergence 조건을 만족하지 않음
         # 그래서 noise와 soft decision을 추가해서 → 모든 상태 reachable하게 만듦
+        
+        # 리셋 이후 상대 시간
+        dt = t - t_reset
+        
+        # soft-reset EWMA λ 계산
+        if dt < lambda_restore_T:
+            # 선형 보간: min_est → est_lambda
+            lam = min_est_lambda + (est_lambda - min_est_lambda) * (dt / lambda_restore_T)
+        else:
+            lam = est_lambda
+            
         prob = sigmoid(x - s, t, tau)
 
         S_tilde = S
@@ -124,57 +169,66 @@ def train_agent(env, config):
         # 환경 상호작용
         d, x_next, reward = env.step(a)
 
-        # step 3 : attain realized demand and adaptively estimate the distributional parameters
-        demand_history.append(max(d, 0))  # 수요는 비음수
-        alpha_hat, beta_hat = estimate_gamma_params(demand_history)
+        # step 3 : attain realized demand and adaptively estimate the distributional parameters 
+        alpha_hat, beta_hat, m_mean, m_var = ewma_estimate(m_mean, m_var, d, est_lambda)
+        
+        alpha_history.append(alpha_hat)
+        beta_history.append(beta_hat)
+        
         logger.info(f"[{t}] Demand: {d:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}, x={x:.4f}, x_next={x_next:.4f}, a={a:.4f}")
+        
+        # 5) adaptive threshold & refractory 적용
+        time_since_change = t - t_reset
+        # (a) 냉각기간이 지나야 감지 허용
+        if time_since_change > refractory_T and len(alpha_history) > window:
+            # (b) 적응형 임계치
+            if time_since_change < adapt_T:
+                threshold = base_threshold * adapt_factor
+            else:
+                threshold = base_threshold
 
-        if t >= warmup_period:
-            # step 4 : update the relative value function
-            w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, phi_scale)
+            if is_change_detected(alpha_history, beta_history,
+                                  detection_lambda, window, threshold):
+                logger.warning(f"[{t}] Change detected → hard reset critic+policy.")
+                # Hard reset: critic w, rho, s, S
+                w, rho = np.zeros(4), config["rho_init"]
+                # s, S = config["s_init"], config["S_init"]
+                t_reset = t                  # 리셋 시점 기록
+                dt = t - t_reset  # 리셋 이후 상대 시간
+                alpha_history.clear()       # 탐지 재발 방지
+                beta_history.clear()
             
-            rho_history.append(rho)
-            w_history.append(w)
+        # step 4 : update the relative value function
+        w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, dt, phi_scale)
+        
+        rho_history.append(rho)
+        w_history.append(w)
+        
+        # step 5 : update the policy parameters
+        s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, dt, alpha_hat, beta_hat, tau, S_tilde, phi_scale, max_inventory)
+        
+        s_history.append(s)
+        S_history.append(S)
 
-            logger.info(
-                f"[{t}] "
-                f"w={w}, "
-                f"rho={rho:.4f}, "
-                f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
-                f"delta={delta:.4f}, "
-            )
+        logger.info(
+            f"[{t}] "
+            f"s={s:.4f}, S={S:.4f}, "
+            f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
+            f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
+        )
 
-            # step 5 : update the policy parameters
-            s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale)
-
-            logger.info(
-                f"[{t}] "
-                f"s={s:.4f}, S={S:.4f}, "
-                f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
-                f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
-            )
-
-            s_history.append(s)
-            S_history.append(S)
-
-            debug_dict["V_x"].append(V_x)
-            debug_dict["V_x_next"].append(V_x_next)
-            debug_dict["V_zs"].append(V_zs)
-            debug_dict["V_zS"].append(V_zS)
-            debug_dict["delta"].append(delta)
-            debug_dict["tau"].append(tau(t))
-            debug_dict["sigma"].append(sigma(t))
-            debug_dict["x"].append(x)
-
-        else:
-            rho_history.append(rho)
-            w_history.append(w)
-            s_history.append(s)
-            S_history.append(S)
-            
+        debug_dict["V_x"].append(V_x)
+        debug_dict["V_x_next"].append(V_x_next)
+        debug_dict["V_zs"].append(V_zs)
+        debug_dict["V_zS"].append(V_zS)
+        debug_dict["delta"].append(delta)
+        debug_dict["tau"].append(tau(dt))
+        debug_dict["sigma"].append(sigma(dt))
+        debug_dict["x"].append(x)
+        
         x = x_next
 
-        logger.info("-" *30)
+    logger.info("-" *30)
 
 def plot_debug_variables(debug_dict, s_history, S_history, config):
     warmup_period = config.get("warmup_period", 60)
@@ -231,15 +285,17 @@ if __name__ == "__main__":
 
     for run in range(NUM_RUNS):
         logger.info(f"=== Run {run+1}/{NUM_RUNS} ===")
-        env = InventoryEnv(config)
+        env1 = InventoryEnv(config)
+        env2 = InventoryEnv(config)
 
         # Initialize for each run
         rho_history, w_history = [], []
         s_history, S_history = [], []
 
         debug_dict = {k: [] for k in debug_keys}
-
-        train_agent(env, config)
+        
+        m_mean, m_var = warmup_agent(env1, config) # Warmup phase
+        train_agent(env2, config, m_mean, m_var)
 
         # Convert to numpy arrays for accumulation
         for k in debug_keys:
