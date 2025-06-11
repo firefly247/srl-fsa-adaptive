@@ -11,7 +11,7 @@ phi_scale:  10
 warmup_period: 60
 train_period: 1000
 s_init: -5.0
-S_init: 10.0
+S_init: 10
 rho_init: 0.0
 sigma_init: 1
 tau_init: 1

@@ -129,48 +129,56 @@ def train_agent(env, config):
         alpha_hat, beta_hat = estimate_gamma_params(demand_history)
         logger.info(f"[{t}] Demand: {d:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}, x={x:.4f}, x_next={x_next:.4f}, a={a:.4f}")
 
-        # step 4 : update the relative value function
-        w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, phi_scale)
-        
-        rho_history.append(rho)
-        w_history.append(w)
+        if t >= warmup_period:
+            # step 4 : update the relative value function
+            w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, phi_scale)
+            
+            rho_history.append(rho)
+            w_history.append(w)
 
-        logger.info(
-            f"[{t}] "
-            f"w={w}, "
-            f"rho={rho:.4f}, "
-            f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
-            f"delta={delta:.4f}, "
-        )
+            logger.info(
+                f"[{t}] "
+                f"w={w}, "
+                f"rho={rho:.4f}, "
+                f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
+                f"delta={delta:.4f}, "
+            )
 
-        # step 5 : update the policy parameters
-        s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale)
+            # step 5 : update the policy parameters
+            s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale)
 
-        logger.info(
-            f"[{t}] "
-            f"s={s:.4f}, S={S:.4f}, "
-            f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
-            f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
-        )
+            logger.info(
+                f"[{t}] "
+                f"s={s:.4f}, S={S:.4f}, "
+                f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
+                f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
+            )
 
-        s_history.append(s)
-        S_history.append(S)
+            s_history.append(s)
+            S_history.append(S)
 
-        debug_dict["V_x"].append(V_x)
-        debug_dict["V_x_next"].append(V_x_next)
-        debug_dict["V_zs"].append(V_zs)
-        debug_dict["V_zS"].append(V_zS)
-        debug_dict["delta"].append(delta)
-        debug_dict["tau"].append(tau(t))
-        debug_dict["sigma"].append(sigma(t))
-        debug_dict["x"].append(x)
+            debug_dict["V_x"].append(V_x)
+            debug_dict["V_x_next"].append(V_x_next)
+            debug_dict["V_zs"].append(V_zs)
+            debug_dict["V_zS"].append(V_zS)
+            debug_dict["delta"].append(delta)
+            debug_dict["tau"].append(tau(t))
+            debug_dict["sigma"].append(sigma(t))
+            debug_dict["x"].append(x)
 
+        else:
+            rho_history.append(rho)
+            w_history.append(w)
+            s_history.append(s)
+            S_history.append(S)
+            
         x = x_next
 
         logger.info("-" *30)
 
-def plot_debug_variables(debug_dict, s_history, S_history):
-    steps = np.arange(len(debug_dict["V_x"]))
+def plot_debug_variables(debug_dict, s_history, S_history, config):
+    warmup_period = config.get("warmup_period", 60)
+    steps = np.arange(warmup_period, warmup_period + len(debug_dict["V_x"]))
     plt.figure(figsize=(14, 10))
 
     plt.subplot(3, 2, 1)
@@ -195,7 +203,7 @@ def plot_debug_variables(debug_dict, s_history, S_history):
     plt.subplot(3, 2, 5)
     plt.plot(steps, debug_dict["x"], label="x")
     plt.title("Inventory state x"); plt.grid(True)
-
+    steps = np.arange(len(s_history))
     plt.subplot(3, 2, 6)
     plt.plot(steps, s_history, label='s', color='blue')
     plt.plot(steps, S_history, label='S', color='orange')
@@ -224,4 +232,4 @@ if __name__ == "__main__":
     env = InventoryEnv(config)
     train_agent(env, config)
 
-    plot_debug_variables(debug_dict, s_history, S_history)
+    plot_debug_variables(debug_dict, s_history, S_history, config)
