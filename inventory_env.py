@@ -41,7 +41,7 @@ class InventoryEnv(gym.Env):
             regime_index = (self.t // self.switching_period) % len(self.regime_sequence)
             self.alpha, self.beta = self.regime_sequence[regime_index]
 
-        logger.info(f"[{self.t}] alpha: {self.alpha}, beta: {self.beta}")
+        # logger.info(f"[{self.t}] alpha: {self.alpha}, beta: {self.beta}")
         demand = np.random.gamma(self.alpha, 1.0 / self.beta)
         # demand = self.truncated_poisson_sample(self.alpha)
         self.t += 1

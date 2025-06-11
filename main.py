@@ -8,8 +8,10 @@ def phi(x, c):
     x = x / c
     return np.array([x, x**2, x**3, x**4])
 
-def sigmoid(x, t, tau):
-    return 1 / (1 + np.exp(-x / tau(t)))
+def sigmoid(x, t, tau, clip_range=30):
+    z = x / tau(t)
+    z = np.clip(z, -clip_range, clip_range)  # clip to avoid overflow
+    return 1 / (1 + np.exp(-z))
 
 def sigmoid_derivative(x, t, tau):
     s = sigmoid(x, t, tau)
@@ -34,7 +36,7 @@ def update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, phi_scal
 
     return w, rho, V_x, V_x_next, delta
 
-def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale):
+def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale, max_inventory):
 
     # Sampling Bernoulli variables (η_S and η_s)
     eta_S = np.random.binomial(1, 0.5)
@@ -54,7 +56,7 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
         z_s = S_tilde - np.random.gamma(alpha_hat, 1 / beta_hat) # 주문한 경우
 
     # s를 조금 바꾸었을 때 그것이 x → x'로 갈 확률을 얼마나 바꾸는지 계산
-    logger.info(f"[{t}] z_s: {z_s:.4f}, z_S: {z_S:.4f}, eta_s: {eta_s}, eta_S: {eta_S}")
+    # logger.info(f"[{t}] z_s: {z_s:.4f}, z_S: {z_S:.4f}, eta_s: {eta_s}, eta_S: {eta_S}")
 
     # Compute policy function f(x, s) and its derivative
     f_xs = sigmoid(x - s, t, tau)
@@ -68,13 +70,13 @@ def update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat,
     S -= b1(t) * beta_hat * (1 - f_xs) * ((-1) ** eta_S) * V_zS
     s -= b2(t) * df_dy * ((-1) ** eta_s) * V_zs
 
-    logger.info(f"[{t}] S: {S:.4f}, s: {s:.4f}, "
-                f"b1(t): {b1(t):.4f}, b2(t): {b2(t):.4f}, "
-                f"f_xs: {f_xs:.4f}, df_dy: {df_dy:.4f}, "
-                f"eta_S: {eta_S}, eta_s: {eta_s}, "
-                f"V_zs: {V_zs:.4f}, V_zS: {V_zS:.4f}, ")
+    # logger.info(f"[{t}] S: {S:.4f}, s: {s:.4f}, "
+    #             f"b1(t): {b1(t):.4f}, b2(t): {b2(t):.4f}, "
+    #             f"f_xs: {f_xs:.4f}, df_dy: {df_dy:.4f}, "
+    #             f"eta_S: {eta_S}, eta_s: {eta_s}, "
+    #             f"V_zs: {V_zs:.4f}, V_zS: {V_zS:.4f}, ")
 
-    S = np.clip(S, -np.inf, phi_scale)  # Ensure S <= max_inventory
+    S = np.clip(S, -np.inf, max_inventory)  # Ensure S <= max_inventory
     s = np.clip(s, -np.inf, S)  # Ensure s <= S
 
     return s, S, V_zs, V_zS
@@ -83,12 +85,13 @@ def train_agent(env, config):
     
     # config에서 초기 파라미터 불러오기
     phi_scale = config.get("phi_scale", 50)
+    max_inventory = config.get("max_inventory", 1000)
     s = config["s_init"]
     S = config["S_init"]
     rho = config["rho_init"]
 
-    b1 = lambda t: 0.1 / (np.floor(t/10) + 1)
-    b2 = lambda t: 10 / (np.floor(t/20) + 1) ** 0.9
+    b1 = lambda t: 4 / (np.floor(t/10) + 1)
+    b2 = lambda t: 4 / (np.floor(t/20) + 1)
     gamma1 = lambda t: 0.1 / (t + 1) ** 0.7
     gamma2 = 0.01
 
@@ -97,7 +100,7 @@ def train_agent(env, config):
     
     warmup_period = config.get("warmup_period", 60)
     train_period = config.get("train_period", 1000)
-    episodes = len(config["regime_sequence"]) * (warmup_period + train_period)
+    episodes = warmup_period + len(config["regime_sequence"]) * (train_period)
 
     w = np.zeros(4)
     demand_history = []
@@ -127,7 +130,7 @@ def train_agent(env, config):
         # step 3 : attain realized demand and adaptively estimate the distributional parameters
         demand_history.append(max(d, 0))  # 수요는 비음수
         alpha_hat, beta_hat = estimate_gamma_params(demand_history)
-        logger.info(f"[{t}] Demand: {d:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}, x={x:.4f}, x_next={x_next:.4f}, a={a:.4f}")
+        # logger.info(f"[{t}] Demand: {d:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}, x={x:.4f}, x_next={x_next:.4f}, a={a:.4f}")
 
         if t >= warmup_period:
             # step 4 : update the relative value function
@@ -136,31 +139,32 @@ def train_agent(env, config):
             rho_history.append(rho)
             w_history.append(w)
 
-            logger.info(
-                f"[{t}] "
-                f"w={w}, "
-                f"rho={rho:.4f}, "
-                f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
-                f"delta={delta:.4f}, "
-            )
+            # logger.info(
+            #     f"[{t}] "
+            #     f"w={w}, "
+            #     f"rho={rho:.4f}, "
+            #     f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
+            #     f"delta={delta:.4f}, "
+            # )
 
             # step 5 : update the policy parameters
-            s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale)
+            s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale, max_inventory)
 
-            logger.info(
-                f"[{t}] "
-                f"s={s:.4f}, S={S:.4f}, "
-                f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
-                f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
-            )
+            if t % 100 == 0:
+                logger.info(
+                    f"[{t}] "
+                    f"s={s:.4f}, S={S:.4f}, "
+                    f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
+                    f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
+                )
 
             s_history.append(s)
             S_history.append(S)
 
             debug_dict["V_x"].append(V_x)
             debug_dict["V_x_next"].append(V_x_next)
-            debug_dict["V_zs"].append(V_zs)
-            debug_dict["V_zS"].append(V_zS)
+            debug_dict["b1"].append(b1(t))
+            debug_dict["b2"].append(b2(t))
             debug_dict["delta"].append(delta)
             debug_dict["tau"].append(tau(t))
             debug_dict["sigma"].append(sigma(t))
@@ -174,7 +178,7 @@ def train_agent(env, config):
             
         x = x_next
 
-        logger.info("-" *30)
+        # logger.info("-" *30)
 
 def plot_debug_variables(debug_dict, s_history, S_history, config):
     warmup_period = config.get("warmup_period", 60)
@@ -191,9 +195,9 @@ def plot_debug_variables(debug_dict, s_history, S_history, config):
     plt.title("TD Error"); plt.grid(True)
 
     plt.subplot(3, 2, 3)
-    plt.plot(steps, debug_dict["V_zs"], label="V_zs")
-    plt.plot(steps, debug_dict["V_zS"], label="V_zS")
-    plt.legend(); plt.title("V(z_s), V(z_S)"); plt.grid(True)
+    plt.plot(steps, debug_dict["b1"], label="b1")
+    plt.plot(steps, debug_dict["b2"], label="b2")
+    plt.legend(); plt.title("b1, b2"); plt.grid(True)
 
     plt.subplot(3, 2, 4)
     plt.plot(steps, debug_dict["tau"], label="tau")
@@ -204,6 +208,7 @@ def plot_debug_variables(debug_dict, s_history, S_history, config):
     plt.plot(steps, debug_dict["x"], label="x")
     plt.title("Inventory state x"); plt.grid(True)
     steps = np.arange(len(s_history))
+    
     plt.subplot(3, 2, 6)
     plt.plot(steps, s_history, label='s', color='blue')
     plt.plot(steps, S_history, label='S', color='orange')
@@ -218,13 +223,13 @@ def plot_debug_variables(debug_dict, s_history, S_history, config):
 
 if __name__ == "__main__":
 
-    NUM_RUNS = 30
+    NUM_RUNS = 5
 
     with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     # Initialize accumulators
-    debug_keys = ["V_x", "V_x_next", "V_zs", "V_zS", "delta", "tau", "sigma", "x"]
+    debug_keys = ["V_x", "V_x_next", "b1", "b2", "delta", "tau", "sigma", "x"]
     debug_dict_sum = {k: None for k in debug_keys}
     s_history_sum = None
     S_history_sum = None
