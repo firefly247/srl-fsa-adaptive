@@ -87,8 +87,8 @@ def train_agent(env, config):
     S = config["S_init"]
     rho = config["rho_init"]
 
-    b1 = lambda t: 0.01 / (np.floor(t/10) + 1)
-    b2 = lambda t: 0.01 / (np.floor(t/20) + 1) ** 0.9
+    b1 = lambda t: 0.1 / (np.floor(t/10) + 1)
+    b2 = lambda t: 10 / (np.floor(t/20) + 1) ** 0.9
     gamma1 = lambda t: 0.1 / (t + 1) ** 0.7
     gamma2 = 0.01
 
@@ -105,7 +105,7 @@ def train_agent(env, config):
     obs = env.reset()
     x = obs[0]
 
-    for t in range(100):
+    for t in range(episodes):
         # step 2 : observe the transitioned state and corresponding reward after taking action at given state x_t
         # 정책 기반 행동 선택
         # 현재 재고 x가 reorder point s보다 작은지 soft하게 판별
@@ -218,18 +218,51 @@ def plot_debug_variables(debug_dict, s_history, S_history, config):
 
 if __name__ == "__main__":
 
-    rho_history, w_history = [], []
-    s_history, S_history = [], []
-
-    debug_dict = {
-        "V_x": [], "V_x_next": [], "V_zs": [], "V_zS": [],
-        "delta": [], "tau": [], "sigma": [], "x": []
-    }
+    NUM_RUNS = 30
 
     with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    env = InventoryEnv(config)
-    train_agent(env, config)
+    # Initialize accumulators
+    debug_keys = ["V_x", "V_x_next", "V_zs", "V_zS", "delta", "tau", "sigma", "x"]
+    debug_dict_sum = {k: None for k in debug_keys}
+    s_history_sum = None
+    S_history_sum = None
 
-    plot_debug_variables(debug_dict, s_history, S_history, config)
+    for run in range(NUM_RUNS):
+        logger.info(f"=== Run {run+1}/{NUM_RUNS} ===")
+        env = InventoryEnv(config)
+
+        # Initialize for each run
+        rho_history, w_history = [], []
+        s_history, S_history = [], []
+
+        debug_dict = {k: [] for k in debug_keys}
+
+        train_agent(env, config)
+
+        # Convert to numpy arrays for accumulation
+        for k in debug_keys:
+            arr = np.array(debug_dict[k])
+            if debug_dict_sum[k] is None:
+                debug_dict_sum[k] = arr
+            else:
+                debug_dict_sum[k] += arr
+
+        s_arr = np.array(s_history)
+        S_arr = np.array(S_history)
+
+        if s_history_sum is None:
+            s_history_sum = s_arr
+            S_history_sum = S_arr
+        else:
+            s_history_sum += s_arr
+            S_history_sum += S_arr
+
+    # Compute average
+    debug_dict_avg = {k: debug_dict_sum[k] / NUM_RUNS for k in debug_keys}
+    s_history_avg = s_history_sum / NUM_RUNS
+    S_history_avg = S_history_sum / NUM_RUNS
+
+    # Plot the averaged debug variables
+    plot_debug_variables(debug_dict_avg, s_history_avg, S_history_avg, config)
