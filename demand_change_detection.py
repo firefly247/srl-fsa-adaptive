@@ -2,6 +2,10 @@ import numpy as np
 from scipy.special import gammaln, psi
   
 def gamma_kl(alpha_p, beta_p, alpha_q, beta_q):
+    """
+    두 Gamma 분포 P(alpha_p, beta_p)와 Q(alpha_q, beta_q) 간의 KL divergence KL[P||Q]를 계산합니다.
+    rate parameterization: f(x)=β^α/Γ(α) x^{α-1} e^{-βx}
+    """
     # KL(P||Q) = α_p*log(β_p/β_q) - logΓ(α_p) + logΓ(α_q)
     #            + (α_p - α_q) ψ(α_p)
     #            + α_q*(β_p/β_q - 1)
@@ -16,6 +20,14 @@ def is_change_detected(alpha_hist, beta_hist,
                        ewma_lambda=0.1,
                        window=100,
                        kl_threshold=0.5):
+    """
+    최신 시점에서만 대칭 KL divergence를 계산해
+    분포 변화가 있었는지(True/False) 반환.
+    - alpha_hist, beta_hist: 추정 α, β 시퀀스 리스트
+    - ewma_lambda: 히스토리 평활 계수
+    - window: 비교할 과거 시점 차
+    - kl_threshold: 대칭 KL 임계치
+    """
     n = len(alpha_hist)
     # 검사할 충분한 데이터가 없으면 변화 아님
     if n < window + 1:
@@ -41,3 +53,4 @@ def is_change_detected(alpha_hist, beta_hist,
     sym_kl = 0.5 * (kl01 + kl10)
 
     return sym_kl > kl_threshold
+  

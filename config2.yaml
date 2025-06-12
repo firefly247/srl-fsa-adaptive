@@ -1,0 +1,39 @@
+# environment
+alpha: 2.0
+beta: 1.0
+holding_cost: 0.1
+backlog_cost: 0.5
+setup_cost: 0.1
+unit_cost: 0.3
+max_inventory: 50
+
+# training
+warmup_period: 60
+train_period: 500
+s_init: 2.0
+S_init: 4.0
+rho_init: 0.0
+sigma: 0.1
+tau: 0.1
+sigma_decay: 0.99
+tau_decay: 0.99
+b1: 0.01
+b2: 0.01
+gamma1_base: 0.1
+gamma2_base: 0.05
+gamma_decay: 0.01
+
+# regime switching
+regime_switching: true
+regime_sequence:
+
+regime_sequence:
+  - [12.5, 2.5]      # Case 1   (5,2) (평균,분산)
+  - [3.125, 0.625]   # Case 2   (5,8)
+  - [1.6667, 0.3333] # Case 3   (5,15)
+  - [50.0, 5.0]      # Case 4   (10,2)
+  - [12.5, 1.25]     # Case 5   (10,8)
+  - [6.6667, 0.6667] # Case 6   (10,15)
+  - [200.0, 10.0]    # Case 7   (20,2)
+  - [50.0, 2.5]      # Case 8   (20,8)
+  - [26.6667, 1.3333] # Case 9  (20,15)
