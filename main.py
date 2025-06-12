@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from ewma_estimation import ewma_estimate
 from demand_change_detection import is_change_detected
 
+from statistics import mean
+
 def phi(x, c):
     x = x / c
     return np.array([x, x**2, x**3, x**4])
@@ -99,17 +101,125 @@ def warmup_agent(env, config):
     logger.info("-" *30)  
     return m_mean, m_var
 
-def train_agent(env, configm, m_mean, m_var):
+def train_agent_base(env, config):
+    
     # config에서 초기 파라미터 불러오기
     phi_scale = config.get("phi_scale", 50)
-    max_inventory = config.get("max_inventory", 1000)
+    max_inventory = config.get("max_inventory", 100)
     
     s = config["s_init"]
     S = config["S_init"]
     rho = config["rho_init"]
 
-    b1 = lambda t: 4 / (np.floor(t/10) + 1)
-    b2 = lambda t: 4 / (np.floor(t/20) + 1)
+    b1 = lambda t: 0.1 / (np.floor(t/10) + 1)
+    b2 = lambda t: 10 / (np.floor(t/10) + 1) 
+#    b2 = lambda t: 0.01 / (np.floor(t/10) + 1) 
+
+    gamma1 = lambda t: 0.1 / (t + 1) ** 0.7
+    gamma2 = 0.01
+
+    tau = lambda t: config["tau_init"] / (np.floor(t/10) + 1) ** 0.8
+    sigma = lambda t: config["sigma_init"] / (np.floor(t/10) + 1) ** 0.8
+    
+    # warmup_period = config.get("warmup_period", 60)
+    train_period = config.get("train_period", 1000)
+    episodes = len(config["regime_sequence"]) * (train_period)   # warmup_period + 
+
+    w = np.zeros(4)
+    demand_history = []
+    cost_history = []
+    obs = env.reset()
+    x = obs[0]
+
+    for t in range(train_period):
+        # step 2 : observe the transitioned state and corresponding reward after taking action at given state x_t
+        # 정책 기반 행동 선택
+        # 현재 재고 x가 reorder point s보다 작은지 soft하게 판별
+        # deterministic (𝑠, 𝑆) 정책은 MDP에서 단일 커뮤니케이션 클래스를 만들지 않기 때문에 → 일반적인 RL convergence 조건을 만족하지 않음
+        # 그래서 noise와 soft decision을 추가해서 → 모든 상태 reachable하게 만듦
+        prob = sigmoid(x - s, t, tau)
+
+        S_tilde = S
+        if np.random.rand() > prob: # 확률적으로 주문 여부 결정
+            noise = np.random.normal(0, sigma(t))
+            S = S + noise
+            a = max(S - x, 0) # 약간의 noise를 추가한 S tilde까지 주문
+        else:
+            a = 0 # 주문 안함
+
+        # 환경 상호작용
+        d, x_next, reward, cost = env.step(a)
+
+        # step 3 : attain realized demand and adaptively estimate the distributional parameters
+        cost_history.append(cost)
+        demand_history.append(max(d, 0))  # 수요는 비음수
+        alpha_hat, beta_hat = estimate_gamma_params(demand_history)
+        logger.info(f"[{t}] Demand: {d:.4f}, alpha={alpha_hat:.4f}, beta={beta_hat:.4f}, x={x:.4f}, x_next={x_next:.4f}, a={a:.4f}")
+
+ #       if t >= warmup_period:
+            # step 4 : update the relative value function
+        w, rho, V_x, V_x_next, delta = update_value_function(w, rho, x, x_next, reward, gamma1, gamma2, t, phi_scale)
+        
+        rho_history.append(rho)
+        w_history.append(w)
+
+        logger.info(
+            f"[{t}] "
+            f"w={w}, "
+            f"rho={rho:.4f}, "
+            f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
+            f"delta={delta:.4f}, "
+        )
+
+        # step 5 : update the policy parameters
+        s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, t, alpha_hat, beta_hat, tau, S_tilde, phi_scale, max_inventory)
+
+        logger.info(
+            f"[{t}] "
+            f"s={s:.4f}, S={S:.4f}, "
+            f"V_zs={V_zs:.4f}, V_zS={V_zS:.4f}, "
+            f"alpha_hat={alpha_hat:.4f}, beta_hat={beta_hat:.4f}, "
+        )
+
+        s_history.append(s)
+        S_history.append(S)
+
+        debug_dict["V_x"].append(V_x)
+        debug_dict["V_x_next"].append(V_x_next)
+        debug_dict["V_zs"].append(V_zs)
+        debug_dict["V_zS"].append(V_zS)
+        debug_dict["delta"].append(delta)
+        debug_dict["tau"].append(tau(t))
+        debug_dict["sigma"].append(sigma(t))
+        debug_dict["x"].append(x)
+
+#        else:
+        rho_history.append(rho)
+        w_history.append(w)
+        s_history.append(s)
+        S_history.append(S)
+            
+        x = x_next
+
+        logger.info("-" *30)
+    
+    average_cost = mean(cost_history)
+    
+
+
+
+
+def train_agent_est(env, configm, m_mean, m_var):
+    # config에서 초기 파라미터 불러오기
+    phi_scale = config.get("phi_scale", 50)
+    max_inventory = config.get("max_inventory", 100)
+    
+    s = config["s_init"]
+    S = config["S_init"]
+    rho = config["rho_init"]
+
+    b1 = lambda t: 0.1 / (np.floor(t/10) + 1)
+    b2 = lambda t: 10 / (np.floor(t/20) + 1)
     gamma1 = lambda t: 0.1 / (t + 1) ** 0.7
     gamma2 = 0.01
 
@@ -215,7 +325,6 @@ def train_agent(env, configm, m_mean, m_var):
         #     f"V_x={V_x:.4f}, V_x_next={V_x_next:.4f}, "
         #     f"delta={delta:.4f}, "
         # )
-
         # step 5 : update the policy parameters
         s, S, V_zs, V_zS = update_policy_parameters(s, S, x, x_next, w, b1, b2, dt, alpha_hat, beta_hat, tau, S_tilde, phi_scale, max_inventory)
 
@@ -284,6 +393,29 @@ def plot_debug_variables(debug_dict, s_history, S_history, config):
     plt.tight_layout()
     plt.show()
 
+
+if __name__ == "__main__":
+    
+    rho_history, w_history = [], []
+    s_history, S_history = [], []
+
+    debug_dict = {
+        "V_x": [], "V_x_next": [], "V_zs": [], "V_zS": [],
+        "delta": [], "tau": [], "sigma": [], "x": []
+    }
+
+    with open("config.yaml", "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    env = InventoryEnv(config)
+    train_agent_base(env, config)
+
+    plot_debug_variables(debug_dict, s_history, S_history, config)
+
+
+
+
+"""
 if __name__ == "__main__":
 
     NUM_RUNS = 1
@@ -309,7 +441,7 @@ if __name__ == "__main__":
         debug_dict = {k: [] for k in debug_keys}
 
         m_mean, m_var = warmup_agent(env1, config) # Warmup phase
-        train_agent(env2, config, m_mean, m_var) # Training phase
+        train_agent_est(env2, config, m_mean, m_var) # Training phase
 
         # Convert to numpy arrays for accumulation
         for k in debug_keys:
@@ -336,3 +468,5 @@ if __name__ == "__main__":
 
     # Plot the averaged debug variables
     plot_debug_variables(debug_dict_avg, s_history_avg, S_history_avg, config)
+    
+"""

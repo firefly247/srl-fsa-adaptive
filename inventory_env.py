@@ -55,7 +55,8 @@ class InventoryEnv(gym.Env):
         reward = -total_cost  # 보상은 비용의 음수
         self.state = next_state
 
-        return demand, self.state, reward
+        
+        return demand, self.state, reward, total_cost
 
     def reset(self):
         self.state = 0.0  # 초기 재고는 0
