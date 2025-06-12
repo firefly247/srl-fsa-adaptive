@@ -17,6 +17,8 @@ class InventoryEnv(gym.Env):
         self.u = config.get("unit_cost", 0.3)
         self.phi_scale = config.get("phi_scale", 50)
 
+        self.warmup_period = config.get("warmup_period", 1000)
+
         self.regime_switching = config.get("regime_switching", True)
         self.switching_period = config.get("switching_period", 1000)
         self.regime_sequence = config.get("regime_sequence", [[2.0, 1.0]])
@@ -38,7 +40,7 @@ class InventoryEnv(gym.Env):
             ordering_cost = 0
 
         if self.regime_switching:
-            regime_index = (self.t // self.switching_period) 
+            regime_index = (self.t - self.warmup_period) // self.switching_period
             self.alpha, self.beta = self.regime_sequence[regime_index]
 
         # logger.info(f"[{self.t}] alpha: {self.alpha}, beta: {self.beta}")

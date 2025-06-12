@@ -11,8 +11,8 @@ max_inventory: 30
 # training
 warmup_period: 60
 train_period: 1000
-s_init: -10.0
-S_init: 20
+s_init: -5.0
+S_init: 10
 rho_init: 0.0
 sigma_init: 1
 tau_init: 1
@@ -34,7 +34,7 @@ refractory_period: 200
 regime_switching: true
 regime_sequence:
   - [4.0, 0.7071]        # √2 / 2 ≈ 0.7071
-  - [1.25, 0.3953]       # √10 / 8 ≈ 0.3953
-  - [8.0, 1.0]
-  - [1.5, 0.4330]        # √3 / 4 ≈ 0.4330
-  - [16.0, 1.4142]       # √2 ≈ 1.4142
+  # - [1.25, 0.3953]       # √10 / 8 ≈ 0.3953
+  # - [8.0, 1.0]
+  # - [1.5, 0.4330]        # √3 / 4 ≈ 0.4330
+  # - [16.0, 1.4142]       # √2 ≈ 1.4142
