@@ -230,8 +230,8 @@ def train_agent(env, config, m_mean, m_var):
 
         debug_dict["V_x"].append(V_x)
         debug_dict["V_x_next"].append(V_x_next)
-        debug_dict["V_zs"].append(V_zs)
-        debug_dict["V_zS"].append(V_zS)
+        debug_dict["b1"].append(b1(dt))
+        debug_dict["b2"].append(b2(dt))
         debug_dict["delta"].append(delta)
         debug_dict["tau"].append(tau(dt))
         debug_dict["sigma"].append(sigma(dt))
